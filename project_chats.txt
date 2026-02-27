@@ -1,0 +1,254 @@
+================================================================================
+DATE: 2026-02-17 / 2026-02-18
+================================================================================
+
+TOPIC: Initial setup — GSC + Google Sheets Python integration, App Script → Python conversion
+
+────────────────────────────────────────────────────────────────────────────────
+CHANGES MADE
+────────────────────────────────────────────────────────────────────────────────
+
+1. PROJECT SETUP — Google Cloud + credentials
+   - Created Google Cloud project: onboarding-automation-487809
+   - Enabled APIs: Google Search Console API, Google Sheets API, Google Drive API,
+     Google Docs API (added later when needed)
+   - Created OAuth 2.0 credentials (Desktop App) → credentials.json
+   - OAuth consent screen set to External; both Gmail accounts added as test users
+   - Two-token strategy: token_gsc.json (GSC account) + token_sheets.json (PPC account)
+     Each auto-created on first run via browser OAuth; cached for subsequent runs
+
+2. CONNECTION TEST
+   - Spreadsheet ID: 17qIKtK9YS9JI0bhhSXUltleh5Lwnrc6xTjbceFtMjkg
+   - Tab: "test"
+   - Confirmed write access works; PPC account authorized as Editor on the sheet
+
+3. APP SCRIPT → PYTHON CONVERSION (main.py initial version)
+   - Converted full App Script from personal account sheet into Python CLI menu
+   - Original App Script had: onEdit trigger + 6 auto-analysis functions
+     (DomainAge, SearchConsoleCTR, PageSpeedScore, BacklinkQuality,
+     DomainOverview, SiteAuditHealthScore) + 5 menu actions + exportFindingsToDoc
+   - Python menu options created (numbered, terminal-based):
+     · Anchor Analysis
+     · Sync CTR Percentage (reads D15, strips "%", writes to G15)
+     · Keywords 4–20 Analysis
+     · Traffic Performance
+     · Top Landing Pages
+     · Export Findings to Google Doc (option 12)
+   - SPREADSHEET_ID and DOC_ID defined as constants at top of main.py
+   - authenticate() reads token.json, refreshes if expired, runs browser OAuth if missing
+
+4. EXPORT FINDINGS TO DOC (option 12)
+   - Exports column G findings from Overview tab to Google Doc
+     (Doc ID: 17M22Ba_xKgsT8OTGbZIc5Pw5yS8Ap-1fy7OCorUr7PI)
+   - Format: plain NORMAL_TEXT, font Host Grotesk, size 11, bullet points (BULLET_DISC)
+   - Inserts in reverse order to maintain correct sequence at target index
+   - Doc shared with PPC account as Editor (was 403 before sharing)
+
+────────────────────────────────────────────────────────────────────────────────
+ERRORS & FIXES
+────────────────────────────────────────────────────────────────────────────────
+
+- zsh: command not found: python → use python3 on Mac
+- Libraries not installed → pip3 install google-auth google-auth-oauthlib
+  google-auth-httplib2 google-api-python-client gspread
+- invalid_scope on token.json → deleted old token.json, re-ran to regenerate
+  with correct scopes
+- ValueError: could not convert string to float: '70.00%' → strip "%" before float()
+- DeprecationWarning on update() → switched to named args:
+  overview.update(range_name='...', values=[[...]])
+  Bulk-fixed with sed across all update() calls
+- 403 Google Docs API not enabled → enabled docs.googleapis.com in Cloud Console
+- 403 caller does not have permission on Doc → shared Doc with PPC account as Editor
+- App Script 400 "bad request" on duplicated sheet → skipped (converting to Python anyway)
+
+────────────────────────────────────────────────────────────────────────────────
+KEY DECISIONS & NOTES
+────────────────────────────────────────────────────────────────────────────────
+
+- Two-token approach: GSC data pulled with GSC account token; Sheets/Docs written
+  with PPC account token — each scoped independently
+- Only one credentials.json needed; tokens (token_gsc.json, token_sheets.json)
+  differentiate the accounts at runtime
+- App Script left broken on PPC sheet (400 error); all functionality moved to Python
+- Flask / Cloud Run deployment discussed but NOT implemented in this session
+  (plan: each menu option becomes a URL endpoint; Sheet buttons trigger via fetch)
+- Host Grotesk must be added to the Google Doc manually via font picker before
+  the Docs API can apply it programmatically
+- python3 is the correct command on Mac (python alias not set by default)
+
+================================================================================
+
+================================================================================
+DATE: 2026-02-25 (session 2)
+================================================================================
+
+TOPIC: PageSpeed Insights API, menu restructure, auto-analysis refactor
+
+────────────────────────────────────────────────────────────────────────────────
+CHANGES MADE
+────────────────────────────────────────────────────────────────────────────────
+
+1. NEW OPTION 8 — pagespeed_data()
+   - Added PAGESPEED_API_KEY constant (key set; empty = keyless fallback)
+   - Reads domain from Overview!B45 (same parsing as semrush_data)
+   - Calls PageSpeed Insights API v5 twice: strategy=mobile, strategy=desktop
+   - Prints progress message per call ("Fetching X score, may take ~30s...")
+     to prevent terminal from appearing frozen (each call takes 30–60s)
+   - Writes: mobile score → B7 | desktop score → C7
+   - Writes G7 analysis based on mobile score:
+     · ≥ 90 → "Excellent page speed"
+     · ≥ 50 → "Average page speed"
+     · < 50 → "Poor page speed. Fix core web vitals."
+
+2. MERGED option 4 (Keywords 4-20) into option 7 (SEMrush Data)
+   - Removed keywords_4_to_20() function entirely
+   - Added G27 analysis to end of semrush_data(), computed from top5 list:
+     · total_sv ≥ 100 → "Plenty of opportunities..."
+     · total_sv < 100 → "Good opportunities..."
+     · No keywords found → clears G27
+
+3. REFACTORED run_auto_analysis() (option 1)
+   - Removed # Search Console CTR — B4 block (G4 now written by ctr_percentage)
+   - Removed # Page Speed — B7 block (G7 now written by pagespeed_data)
+   - Remaining checks: Domain Age (B3→G3), Backlink Quality (B9→G9),
+     Domain Rating (B11→G11), Site Audit Health Score (B13→G13)
+
+4. MENU RENUMBERED after removing option 4
+   - 0: Sync All Properties
+   - 1: Run All Auto-Analysis
+   - 2: Anchor Analysis (G15)
+   - 3: Sync CTR from GSC (B4)
+   - 4: GA4 Report (Traffic + Landing Pages)
+   - 5: Export Findings to SEO Brief
+   - 6: Ahrefs Data
+   - 7: SEMrush Data (now includes G27 analysis)
+   - 8: PageSpeed Insights (Mobile → B7 | Desktop → C7)
+
+────────────────────────────────────────────────────────────────────────────────
+KEY DECISIONS & NOTES
+────────────────────────────────────────────────────────────────────────────────
+
+- PageSpeed API key stored as PAGESPEED_API_KEY constant; keyless fallback works
+  but is rate-limited (suitable for occasional use)
+- G7 analysis is based on mobile score (B7), not desktop (C7)
+- Keywords 4-20 tab ("KWs in Top #4-20") no longer needed; SEMrush live data
+  replaced it as the source for B27:D31
+- run_auto_analysis now only covers fields filled manually (B9, B11, B13)
+  plus domain age (B3); live-fetched fields (B4, B7) have their own actions
+
+================================================================================
+
+================================================================================
+DATE: 2026-02-26
+================================================================================
+
+TOPIC: Keyword mapping function — classify keywords in "Organic Keywords All & Keyword Mapping"
+
+────────────────────────────────────────────────────────────────────────────────
+CHANGES MADE
+────────────────────────────────────────────────────────────────────────────────
+
+1. NEW OPTION 10 — keyword_mapping()
+   - Reads from Overview: building name (B53), city (B49), neighborhoods (B51),
+     luxury mode flag (B55, YES/NO)
+   - Classifies every keyword in "Organic Keywords All & Keyword Mapping" column A,
+     writes result to column F ("Category"):
+     · branded       — keyword contains full building name OR any significant token
+                       from it (tokens < 4 chars and generic RE words filtered out)
+     · primary       — keyword contains "apartments" + city → whole row green
+                       (if B55=YES: also "apartments" + city + "luxury" → primary)
+     · tracking only — keyword contains "apartments" + any neighborhood
+     · secondary     — everything else
+   - Green highlight applied via Sheets API batchUpdate:
+     · One request resets all data rows to white (removes stale highlights)
+     · Individual requests per primary row (small subset — efficient at scale)
+   - Sheet auto-resized to 6 columns before writing F if needed (sheet was 5-col)
+   - gspread update() call uses new API (values first, range second) to silence
+     DeprecationWarning
+
+2. SHEET RENAMED: "Organic Keywords All" → "Organic Keywords All & Keyword Mapping"
+   - All 7 occurrences updated: worksheet(), add_worksheet(), print strings, comments
+
+3. GUARD on semrush_data() top-5 block (B27:D31)
+   - Added `if not all_rows: return` guard before the top-5 keywords section
+   - If the keyword sheet is empty, B27:D31 is not touched (no clear, no write)
+
+────────────────────────────────────────────────────────────────────────────────
+ERRORS & FIXES
+────────────────────────────────────────────────────────────────────────────────
+
+- APIError [400]: Range 'Organic Keywords All'!F1:F3493 exceeds grid limits.
+  Max columns: 5 → added kw_sheet.resize(cols=6) before writing to column F
+- DeprecationWarning: update() argument order changed in gspread →
+  switched to kw_sheet.update(f_values, 'F1:F...') (values first)
+
+────────────────────────────────────────────────────────────────────────────────
+KEY DECISIONS & NOTES
+────────────────────────────────────────────────────────────────────────────────
+
+- _GENERIC_RE_WORDS set filters tokens like "the", "at", "apartments", "luxury",
+  "suite", "residence" from building name before partial match — prevents false
+  positives on generic real-estate terms
+- Green highlight = primary (apartments + city); branded has no highlight
+- luxury_mode (B55=YES) adds explicit elif for apartments + city + luxury → primary;
+  this is technically a subset of the existing primary condition but kept for clarity
+- Formatting uses num_cols = max(actual cols, 6) so column F is always covered
+- Sheet resize only triggers if col_count < 6 (idempotent — safe to run multiple times)
+
+================================================================================
+
+================================================================================
+DATE: 2026-02-25 (session 1)
+================================================================================
+
+TOPIC: Ahrefs & SEMrush API integration into main.py (SEO onboarding automation)
+
+────────────────────────────────────────────────────────────────────────────────
+CHANGES MADE
+────────────────────────────────────────────────────────────────────────────────
+
+1. ADDED import requests + Ahrefs/SEMrush constants
+   - Added `import requests`
+   - AHREFS_API_TOKEN, AHREFS_BASE_URL = "https://api.ahrefs.com/v3"
+   - SEMRUSH_API_KEY, SEMRUSH_BASE_URL = "https://api.semrush.com/"
+
+2. MENU OPTION 7 — ahrefs_data()
+   - 3 API calls to Ahrefs v3 (Bearer token auth):
+     · /site-explorer/domain-rating (mode=domain) → Ahrefs Rank
+     · /site-explorer/domain-rating (mode=exact, target=homepage) → Homepage UR
+     · /site-explorer/backlinks-stats → Referring domains count
+     · /site-explorer/anchors → Top 5 anchors by refdomains
+   - Discovered: Ahrefs API v3 requires Enterprise plan ($1,499/mo)
+     → Current plan returns 403 "Insufficient plan" for real domains
+     → Set target = "ahrefs.com" (TEST MODE) to verify code works
+   - Base URL updated from apiv2.ahrefs.com (discontinued Nov 2025) to api.ahrefs.com/v3
+
+3. MENU OPTION 8 — semrush_data()
+   - Reads domain from Overview!B45 (GSC property dropdown), strips to clean domain
+   - Reads city from Overview!B49 (mandatory)
+   - Reads neighborhoods from Overview!B51 (mandatory, comma-separated list)
+   - Fetches domain_organic from SEMrush API with pagination (10,000 rows/page)
+     Columns: Ph (Keyword), Po (Position), Nq (Search Volume), Ur (URL)
+   - Writes all keywords to new tab "Organic Keywords All"
+   - Writes position counts to Overview:
+     · B22 = keywords in positions 1–3
+     · B23 = keywords in positions 4–10
+     · B24 = keywords in positions 11–100
+   - Writes top 5 keywords (pos 4–20) to Overview B27:D31:
+     · Filter: keyword contains "apartments" AND (city OR any neighborhood)
+     · Fallback: keyword contains "apartments" only (if no location match found)
+     · Always batch_clear B27:D31 before writing to prevent stale data
+     · Sorted by search volume descending
+
+────────────────────────────────────────────────────────────────────────────────
+KEY DECISIONS & NOTES
+────────────────────────────────────────────────────────────────────────────────
+
+- Ahrefs v2 was fully discontinued November 2025; all new code uses v3
+- Ahrefs v3 site-explorer endpoints require Enterprise plan only
+- SEMrush domain_organic works with current plan
+- neighborhoods (B51) stored as Python list, split by comma
+- "apartments" keyword filter is mandatory (no fallback removes it)
+- batch_clear added to prevent old sheet data persisting when filter returns empty
+
+================================================================================
