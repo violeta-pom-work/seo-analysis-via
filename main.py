@@ -570,6 +570,8 @@ def semrush_data(creds):
     city          = (overview.acell('B49').value or "").strip()
     neighborhoods = [n.strip() for n in (overview.acell('B51').value or "").split(",") if n.strip()]
     kw_filter     = (overview.acell('B57').value or "").strip().lower()
+    building_name = (overview.acell('B53').value or "").strip()
+    ga4_prop_name = (overview.acell('B47').value or "").strip()
     missing = []
     if not city:
         missing.append("City (Overview!B49)")
@@ -581,21 +583,36 @@ def semrush_data(creds):
         print(f"❌ Missing required fields: {', '.join(missing)}. Please fill them in before running.")
         return
 
+    # Match: building name (B53) alone, OR keyword filter (B57) + city/neighborhood (B49/B51)
+    building_lower = building_name.lower()
+    location_terms = [city.lower()] + [n.lower() for n in neighborhoods]
+
+    def kw_matches(kw):
+        kw = kw.lower()
+        if building_lower and building_lower in kw:
+            return True
+        if kw_filter in kw and any(loc in kw for loc in location_terms):
+            return True
+        if kw_filter == "apartments" and "bedroom" in kw and any(loc in kw for loc in location_terms):
+            return True
+        return False
+
     print(f"  Analysing domain: {domain} | City: {city} | Neighborhoods: {', '.join(neighborhoods)}")
 
     all_rows = []
     headers  = None
     offset   = 0
-    limit    = 10000
+    batch    = 10000
+    MAX_KW   = 100
 
-    while True:
+    while len(all_rows) < MAX_KW:
         response = requests.get(SEMRUSH_BASE_URL, params={
             "type":           "domain_organic",
             "key":            SEMRUSH_API_KEY,
             "domain":         domain,
             "database":       "us",
             "export_columns": "Ph,Po,Nq,Ur,In",
-            "display_limit":  limit,
+            "display_limit":  batch,
             "display_offset": offset,
         })
         text = response.text.strip()
@@ -610,14 +627,19 @@ def semrush_data(creds):
             headers = lines[0].split(";")
 
         rows = [line.split(";") for line in lines[1:]]
-        all_rows.extend(rows)
 
-        if len(rows) < limit:
+        for row in rows:
+            if row and kw_matches(row[0]):
+                all_rows.append(row)
+                if len(all_rows) >= MAX_KW:
+                    break
+
+        if len(rows) < batch:
             break
-        offset += limit
+        offset += batch
 
     if not all_rows:
-        print("❌ No data returned from SEMrush.")
+        print("❌ No matching keywords found in SEMrush.")
         return
 
     # Map intent numbers to names
@@ -658,48 +680,37 @@ def semrush_data(creds):
     overview.update('B24', [[top100 - top10]])
     print(f"✅ Position counts → B22: {top3} (1-3) | B23: {top10 - top3} (4-10) | B24: {top100 - top10} (11-100)")
 
-    # Top 5 keywords (pos 4-20) sorted by search volume descending → B27:D31
-    # Filter: B57 keyword + any neighborhood; fallback: B57 keyword only; fallback: top by SV
-    # Guard: skip entirely if the keyword sheet has no data
+    # Top 5 keywords → B27:D31
+    # 1. From all_rows, keep only keywords containing B57 filter; sort by SV desc; take top 20
+    # 2. From those 20, keep only positions 4-20 and write up to 5
+    overview.batch_clear(['B27:B31', 'C27:C31', 'D27:D31'])
+
     if not all_rows:
         print("⚠️ 'Organic Keywords All & Keyword Mapping' is empty — skipping B27:D31.")
         return
 
-    mid_range = []
+    location_terms = [city.lower()] + [n.lower() for n in neighborhoods]
+    kw_filtered = []
     for row in all_rows:
         try:
             pos = int(row[1])
             sv  = int(row[2])
         except (ValueError, IndexError):
             continue
-        if 4 <= pos <= 20:
-            mid_range.append((row[0], pos, sv))
+        kw = row[0].lower()
+        if kw_filter in kw and any(loc in kw for loc in location_terms):
+            kw_filtered.append((row[0], pos, sv))
 
-    # Always clear first so old data never lingers
-    overview.batch_clear(['B27:B31', 'C27:C31', 'D27:D31'])
+    kw_filtered.sort(key=lambda x: x[2], reverse=True)
+    top20 = kw_filtered[:20]
 
-    location_terms = [city.lower()] + [n.lower() for n in neighborhoods]
-    filtered = [
-        (kw, pos, sv) for kw, pos, sv in mid_range
-        if kw_filter in kw.lower()
-        and any(loc in kw.lower() for loc in location_terms)
-    ]
-    if not filtered:
-        # Fallback 1: kw_filter mandatory, no location requirement
-        filtered = [(kw, pos, sv) for kw, pos, sv in mid_range if kw_filter in kw.lower()]
-    if not filtered:
-        # Fallback 2: no match found — use top keywords by search volume
-        filtered = mid_range
-        print(f"⚠️ No '{kw_filter}' keywords found in positions 4-20 — using top keywords by search volume.")
-
-    filtered.sort(key=lambda x: x[2], reverse=True)
-    top5 = filtered[:5]
+    top5 = [(kw, pos, sv) for kw, pos, sv in top20 if 4 <= pos <= 20][:5]
 
     if top5:
         overview.update('B27:B31', [[kw]  for kw, _, _  in top5])
         overview.update('C27:C31', [[pos] for _, pos, _ in top5])
         overview.update('D27:D31', [[sv]  for _, _, sv  in top5])
-        print(f"✅ Top 5 keywords (pos 4-20 by SV) written to Overview B27:D31")
+        print(f"✅ Top 5 keywords (pos 4-20 from top-20 by SV) written to Overview B27:D31")
         total_sv = sum(sv for _, _, sv in top5)
         if total_sv >= 100:
             overview.update('G27', [["Plenty of opportunities in the top 4-20 to increase rankings for high SV terms."]])
@@ -707,7 +718,7 @@ def semrush_data(creds):
             overview.update('G27', [["Good opportunities in the top 4-20 to increase rankings for good terms."]])
     else:
         overview.update('G27', [['']])
-        print("⚠️ No keywords found in positions 4-20.")
+        print(f"⚠️ No '{kw_filter}' keywords found in positions 4-20 within the top 20 by search volume.")
 
 
 # ── 9. PageSpeed Insights ─────────────────────────────────────────────────────
@@ -1047,32 +1058,39 @@ def clean_all_data(creds):
     doc     = docs.documents().get(documentId=DOC_ID).execute()
     content = doc.get('body', {}).get('content', [])
 
-    # Step 1: find position of the Findings paragraph in the content list
-    findings_pos = None
+    # Step 1: find the Findings and Recommendations headings (case-insensitive)
+    findings_pos       = None
+    recommendations_pos = None
     for i, elem in enumerate(content):
         para = elem.get('paragraph')
         if not para:
             continue
-        for pe in para.get('elements', []):
-            if 'Findings' in pe.get('textRun', {}).get('content', ''):
-                findings_pos = i
-                break
-        if findings_pos is not None:
+        full_text = ''.join(
+            pe.get('textRun', {}).get('content', '')
+            for pe in para.get('elements', [])
+        )
+        if findings_pos is None and 'findings' in full_text.lower():
+            findings_pos = i
+        elif findings_pos is not None and 'recommendations' in full_text.lower():
+            recommendations_pos = i
             break
 
     if findings_pos is None:
         print("⚠️ 'Findings' heading not found in doc — skipping doc cleanup.")
     else:
-        # Step 2: collect every paragraph after Findings until the next heading
+        # Step 2: collect every element between Findings and Recommendations
         to_delete = []
-        for elem in content[findings_pos + 1:]:
+        end = recommendations_pos if recommendations_pos is not None else len(content)
+        for elem in content[findings_pos + 1 : end]:
             para = elem.get('paragraph')
             if not para:
                 continue
-            style = para.get('paragraphStyle', {}).get('namedStyleType', '')
-            if style.startswith('HEADING'):
-                break
-            to_delete.append(elem)
+            text = ''.join(
+                pe.get('textRun', {}).get('content', '')
+                for pe in para.get('elements', [])
+            ).strip()
+            if text:
+                to_delete.append(elem)
 
         if to_delete:
             # Step 3: delete bottom-to-top so earlier indices stay valid
@@ -1088,7 +1106,7 @@ def clean_all_data(creds):
                 documentId=DOC_ID,
                 body={'requests': delete_requests}
             ).execute()
-            print(f"✅ SEO Brief findings cleared ({len(to_delete)} items removed).")
+            print(f"✅ SEO Brief findings cleared ({len(to_delete)} bullet points removed).")
         else:
             print("  No findings content in doc to clear.")
 
