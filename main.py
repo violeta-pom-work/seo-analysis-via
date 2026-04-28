@@ -1158,9 +1158,15 @@ if __name__ == "__main__":
         ("Keyword Mapping",     "10"),
     ]
 
-    creds = authenticate()
+    try:
+        creds = authenticate()
+    except Exception as e:
+        creds = None
+        print(f"⚠️ Auth failed: {e}")
 
     def run_action(action_key):
+        if creds is None:
+            return "❌ Authentication failed. Check that GOOGLE_TOKEN_JSON and GOOGLE_CREDENTIALS_JSON secrets are set in Space settings."
         fn = actions.get(action_key)
         if not fn:
             return "❌ Unknown action."
@@ -1183,4 +1189,4 @@ if __name__ == "__main__":
         output  = gr.Textbox(label="Output", lines=20, interactive=False)
         run_btn.click(fn=run_action, inputs=action, outputs=output)
 
-    demo.launch(share=True)
+    demo.launch(server_name="0.0.0.0")
