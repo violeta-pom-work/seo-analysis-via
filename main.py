@@ -33,17 +33,34 @@ PAGESPEED_API_KEY  = "AIzaSyCSXyKUU7oiw7ZUAyOiqQk3Xpy5s8AAZEI"   # optional — 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def authenticate():
+    # On HF Spaces, bootstrap credential files from environment secrets
+    token_env = os.environ.get('GOOGLE_TOKEN_JSON')
+    creds_env = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+    if token_env and not os.path.exists('token.json'):
+        with open('token.json', 'w') as f:
+            f.write(token_env)
+    if creds_env and not os.path.exists('credentials.json'):
+        with open('credentials.json', 'w') as f:
+            f.write(creds_env)
+
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
         else:
+            if not os.path.exists('credentials.json'):
+                raise RuntimeError(
+                    "No credentials found. Set GOOGLE_TOKEN_JSON and "
+                    "GOOGLE_CREDENTIALS_JSON as Space secrets."
+                )
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0, prompt='select_account')
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
     return creds
 
 
@@ -990,11 +1007,14 @@ def clean_all_data(creds):
         'G13',                                    # Site Audit commentary
         'B15:B19', 'C15:C19', 'D15', 'G15',     # Anchors
         'B22', 'B23', 'B24',                     # Keyword position counts
-        'B45', 'B47', 'B49', 'B51', 'B53', 'B55', 'B57',  # Property/config fields
+        'B45', 'B47', 'B49', 'B51', 'B53',  # Property/config fields
         'B27:B31', 'C27:C31', 'D27:D31', 'G27', # Top keywords
         'B33', 'B34', 'B35', 'B36', 'G34',      # GA4 Traffic
         'B38:B42', 'C38:C42', 'D38:D42', 'G38', # Landing Pages
     ])
+    # Reset dropdown selections to "None" without removing the dropdown itself
+    overview.update('B55', [['None']])
+    overview.update('B57', [['None']])
     print("✅ Overview data cleared.")
 
     # ── Organic Keywords sheet ────────────────────────────────────────────────
