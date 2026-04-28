@@ -33,7 +33,6 @@ PAGESPEED_API_KEY  = "AIzaSyCSXyKUU7oiw7ZUAyOiqQk3Xpy5s8AAZEI"   # optional — 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def authenticate():
-    # On HF Spaces, bootstrap credential files from environment secrets
     token_env = os.environ.get('GOOGLE_TOKEN_JSON')
     creds_env = os.environ.get('GOOGLE_CREDENTIALS_JSON')
     if token_env and not os.path.exists('token.json'):
@@ -43,24 +42,24 @@ def authenticate():
         with open('credentials.json', 'w') as f:
             f.write(creds_env)
 
-    creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    if not os.path.exists('token.json'):
+        raise RuntimeError(
+            "token.json not found. Set GOOGLE_TOKEN_JSON as a Space secret."
+        )
+
+    creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+            with open('token.json', 'w') as f:
+                f.write(creds.to_json())
         else:
-            if not os.path.exists('credentials.json'):
-                raise RuntimeError(
-                    "No credentials found. Set GOOGLE_TOKEN_JSON and "
-                    "GOOGLE_CREDENTIALS_JSON as Space secrets."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0, prompt='select_account')
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+            raise RuntimeError(
+                "Token is invalid and cannot be refreshed. "
+                "Update the GOOGLE_TOKEN_JSON secret with a fresh token."
+            )
+
     return creds
 
 
@@ -1158,21 +1157,14 @@ if __name__ == "__main__":
         ("Keyword Mapping",     "10"),
     ]
 
-    try:
-        creds = authenticate()
-    except Exception as e:
-        creds = None
-        print(f"⚠️ Auth failed: {e}")
-
     def run_action(action_key):
-        if creds is None:
-            return "❌ Authentication failed. Check that GOOGLE_TOKEN_JSON and GOOGLE_CREDENTIALS_JSON secrets are set in Space settings."
         fn = actions.get(action_key)
         if not fn:
             return "❌ Unknown action."
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             try:
+                creds = authenticate()
                 fn(creds)
             except Exception as e:
                 print(f"❌ Error: {e}")
@@ -1189,4 +1181,4 @@ if __name__ == "__main__":
         output  = gr.Textbox(label="Output", lines=20, interactive=False)
         run_btn.click(fn=run_action, inputs=action, outputs=output)
 
-    demo.launch(server_name="0.0.0.0")
+    demo.launch()
