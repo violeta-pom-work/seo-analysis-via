@@ -1151,14 +1151,22 @@ if __name__ == "__main__":
     import gradio as gr
 
     ACTION_CHOICES = [
-        ("⭐ Run Full Audit",    "11"),
-        ("Sync All Properties", "0"),
-        ("✖ Clean All Data",    "12"),
-        ("Keyword Mapping",     "10"),
+        "⭐ Run Full Audit",
+        "Sync All Properties",
+        "✖ Clean All Data",
+        "Keyword Mapping",
     ]
 
+    LABEL_TO_KEY = {
+        "⭐ Run Full Audit":    "11",
+        "Sync All Properties": "0",
+        "✖ Clean All Data":    "12",
+        "Keyword Mapping":     "10",
+    }
+
     def run_action(action_key):
-        fn = actions.get(action_key)
+        key = LABEL_TO_KEY.get(action_key, action_key)
+        fn = actions.get(key)
         if not fn:
             return "❌ Unknown action."
         buf = io.StringIO()
@@ -1174,7 +1182,7 @@ if __name__ == "__main__":
         gr.Markdown("# 🔍 SEO Audit")
         action = gr.Dropdown(
             choices=ACTION_CHOICES,
-            value="11",
+            value="⭐ Run Full Audit",
             label="Select action",
         )
         run_btn = gr.Button("▶ Run", variant="primary")
