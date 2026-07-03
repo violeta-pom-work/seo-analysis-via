@@ -1,0 +1,6 @@
+# Secrets — never commit
+credentials.json
+token.json
+token_*.json
+*.env
+.env
